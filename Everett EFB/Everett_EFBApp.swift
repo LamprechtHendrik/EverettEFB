@@ -20,7 +20,11 @@ struct Everett_EFBApp: App {
                 TrainingRecord.self,
                 Aircraft.self,
                 AircraftDocument.self,
-                Airport.self
+                Airport.self,
+                Flight.self,
+                FlightLeg.self,
+                LegDocument.self,
+                FlightDaySign.self
             ]
         )
     }

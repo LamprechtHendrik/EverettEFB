@@ -3,7 +3,7 @@ import SwiftData
 
 enum AirportSeeder {
 
-    static let seededKey = "airport_database_seeded_v3"
+    static let seededKey = "airport_database_seeded_v4"
 
     static let allowedCountries: Set<String> = ["BW","KE","MZ","NA","TZ","ZA","ZW"]
 
