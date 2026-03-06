@@ -1,10 +1,3 @@
-//
-//  Everett_EFBApp.swift
-//  Everett EFB
-//
-//  Created by Hendrik Adriaan Lamprecht on 4/3/26.
-//
-
 import SwiftUI
 import SwiftData
 

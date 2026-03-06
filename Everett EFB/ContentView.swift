@@ -2,125 +2,97 @@ import SwiftUI
 import SwiftData
 
 struct ContentView: View {
+    @Environment(\.modelContext) private var modelContext
 
-var body: some View {
-    NavigationStack {
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 20) {
+                LogoView()
 
-        VStack(alignment: .leading, spacing: 20) {
+                Text("Everett EFB")
+                    .font(.largeTitle)
+                    .bold()
 
-            LogoView()
+                Text("Choose a module")
+                    .foregroundStyle(.secondary)
 
-            Text("Everett EFB")
-                .font(.largeTitle)
-                .bold()
+                VStack(spacing: 14) {
+                    NavigationLink {
+                        FlightsHomeView()
+                    } label: {
+                        HomeButton(
+                            title: "Flights",
+                            subtitle: "Create and manage flights",
+                            systemImage: "airplane"
+                        )
+                    }
 
-            Text("Choose a module")
-                .foregroundStyle(.secondary)
+                    NavigationLink {
+                        ReportsHomeView()
+                    } label: {
+                        HomeButton(
+                            title: "Reports",
+                            subtitle: "View finalized reports",
+                            systemImage: "doc.text"
+                        )
+                    }
 
-            VStack(spacing: 14) {
-
-                NavigationLink {
-                    FlightsHomeView()
-                } label: {
-                    HomeButton(
-                        title: "Flights",
-                        subtitle: "Create and manage flights",
-                        systemImage: "airplane"
-                    )
+                    NavigationLink {
+                        DataHomeView()
+                    } label: {
+                        HomeButton(
+                            title: "Data",
+                            subtitle: "Crew, aircraft, airports, docs",
+                            systemImage: "tray.full"
+                        )
+                    }
                 }
+                .padding(.top, 8)
 
-                NavigationLink {
-                    ReportsHomeView()
-                } label: {
-                    HomeButton(
-                        title: "Reports",
-                        subtitle: "Generate and review reports",
-                        systemImage: "doc.text"
-                    )
-                }
-
-                NavigationLink {
-                    DataHomeView()
-                } label: {
-                    HomeButton(
-                        title: "Data",
-                        subtitle: "Crew, aircraft, airports, docs",
-                        systemImage: "tray.full"
-                    )
-                }
+                Spacer(minLength: 24)
             }
-            .padding(.top, 8)
-
-            Spacer(minLength: 24)
+            .padding()
+            .navigationTitle("Home")
         }
-        .padding()
-        .navigationTitle("Home")
+        .onAppear {
+            AirportSeeder.seedIfNeeded(modelContext: modelContext)
+        }
     }
-}
-
 }
 
 private struct HomeButton: View {
+    let title: String
+    let subtitle: String
+    let systemImage: String
 
-let title: String
-let subtitle: String
-let systemImage: String
+    var body: some View {
+        HStack(spacing: 14) {
+            Image(systemName: systemImage)
+                .font(.system(size: 24, weight: .semibold))
+                .frame(width: 44, height: 44)
+                .background(.thinMaterial)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
 
-var body: some View {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.headline)
 
-    HStack(spacing: 14) {
+                Text(subtitle)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
 
-        Image(systemName: systemImage)
-            .font(.system(size: 24, weight: .semibold))
-            .frame(width: 44, height: 44)
-            .background(.thinMaterial)
-            .clipShape(RoundedRectangle(cornerRadius: 12))
+            Spacer()
 
-        VStack(alignment: .leading, spacing: 2) {
-
-            Text(title)
-                .font(.headline)
-
-            Text(subtitle)
-                .font(.subheadline)
+            Image(systemName: "chevron.right")
                 .foregroundStyle(.secondary)
         }
-
-        Spacer()
-
-        Image(systemName: "chevron.right")
-            .foregroundStyle(.secondary)
+        .padding(14)
+        .background(.thinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
     }
-    .padding(14)
-    .background(.thinMaterial)
-    .clipShape(RoundedRectangle(cornerRadius: 16))
-}
-
-}
-
-struct ReportsHomeView: View {
-
-var body: some View {
-
-    VStack(spacing: 12) {
-
-        Text("Reports")
-            .font(.title)
-            .bold()
-
-        Text("PDF generation, sign-off, and read-only archiving will be built here.")
-            .foregroundStyle(.secondary)
-            .multilineTextAlignment(.center)
-
-        Spacer()
-    }
-    .padding()
-    .navigationTitle("Reports")
-}
-
 }
 
 #Preview {
-ContentView()
+    ContentView()
 }
-
