@@ -3,6 +3,7 @@ import SwiftData
 import PDFKit
 import PencilKit
 import UIKit
+import QuickLook
 
 struct ReportsHomeView: View {
     @Query(sort: [SortDescriptor(\Flight.createdAt, order: .reverse)])
@@ -238,6 +239,17 @@ struct FlightReportsForDayView: View {
 struct FlightReportPackageView: View {
     let flight: Flight
 
+    @Query(sort: [SortDescriptor(\LegDocument.createdAt, order: .reverse)])
+    private var allDocuments: [LegDocument]
+
+    private var flightDocuments: [LegDocument] {
+        let legIDs = Set(flight.legs.map(\.persistentModelID))
+        return allDocuments.filter { doc in
+            guard let leg = doc.leg else { return false }
+            return legIDs.contains(leg.persistentModelID)
+        }
+    }
+
     var body: some View {
         List {
             NavigationLink {
@@ -264,12 +276,12 @@ struct FlightReportPackageView: View {
                 FlightReportDocumentFolderView(
                     title: "Briefings",
                     subtitle: "Briefing and support documents",
-                    documents: flight.documents(in: .briefings)
+                    documents: documents(in: .briefings)
                 )
             } label: {
                 reportFolderRow(
                     title: "Briefings",
-                    subtitle: "\(flight.documents(in: .briefings).count) file(s)",
+                    subtitle: "\(documents(in: .briefings).count) file(s)",
                     systemImage: "folder"
                 )
             }
@@ -278,12 +290,12 @@ struct FlightReportPackageView: View {
                 FlightReportDocumentFolderView(
                     title: "Flight Folios",
                     subtitle: "GENDEC, load sheets and folio docs",
-                    documents: flight.documents(in: .flightFolios)
+                    documents: documents(in: .flightFolios)
                 )
             } label: {
                 reportFolderRow(
                     title: "Flight Folios",
-                    subtitle: "\(flight.documents(in: .flightFolios).count) file(s)",
+                    subtitle: "\(documents(in: .flightFolios).count) file(s)",
                     systemImage: "folder"
                 )
             }
@@ -292,12 +304,12 @@ struct FlightReportPackageView: View {
                 FlightReportDocumentFolderView(
                     title: "Fuel Slips",
                     subtitle: "Fuel-related documents",
-                    documents: flight.documents(in: .fuelSlips)
+                    documents: documents(in: .fuelSlips)
                 )
             } label: {
                 reportFolderRow(
                     title: "Fuel Slips",
-                    subtitle: "\(flight.documents(in: .fuelSlips).count) file(s)",
+                    subtitle: "\(documents(in: .fuelSlips).count) file(s)",
                     systemImage: "folder"
                 )
             }
@@ -306,12 +318,12 @@ struct FlightReportPackageView: View {
                 FlightReportDocumentFolderView(
                     title: "Manifests",
                     subtitle: "Passenger manifests",
-                    documents: flight.documents(in: .manifests)
+                    documents: documents(in: .manifests)
                 )
             } label: {
                 reportFolderRow(
                     title: "Manifests",
-                    subtitle: "\(flight.documents(in: .manifests).count) file(s)",
+                    subtitle: "\(documents(in: .manifests).count) file(s)",
                     systemImage: "folder"
                 )
             }
@@ -320,12 +332,12 @@ struct FlightReportPackageView: View {
                 FlightReportDocumentFolderView(
                     title: "Navlogs",
                     subtitle: "Navigation logs",
-                    documents: flight.documents(in: .navlogs)
+                    documents: documents(in: .navlogs)
                 )
             } label: {
                 reportFolderRow(
                     title: "Navlogs",
-                    subtitle: "\(flight.documents(in: .navlogs).count) file(s)",
+                    subtitle: "\(documents(in: .navlogs).count) file(s)",
                     systemImage: "folder"
                 )
             }
@@ -334,17 +346,65 @@ struct FlightReportPackageView: View {
                 FlightReportDocumentFolderView(
                     title: "Performances",
                     subtitle: "Performance documents",
-                    documents: flight.documents(in: .performances)
+                    documents: documents(in: .performances)
                 )
             } label: {
                 reportFolderRow(
                     title: "Performances",
-                    subtitle: "\(flight.documents(in: .performances).count) file(s)",
+                    subtitle: "\(documents(in: .performances).count) file(s)",
                     systemImage: "folder"
                 )
             }
         }
         .navigationTitle(flight.reportDisplayName)
+    }
+
+    private func documents(in category: FlightReportFolderCategory) -> [FlightReportDocumentItem] {
+        flightDocuments
+            .filter { matches(doc: $0, category: category) }
+            .map { doc in
+                let leg = doc.leg
+                return FlightReportDocumentItem(
+                    displayName: doc.fileName.isEmpty ? doc.type.rawValue : doc.fileName,
+                    documentType: doc.type.rawValue,
+                    legSequence: leg?.sequence ?? 0,
+                    route: {
+                        guard let leg else { return "" }
+                        return "\(leg.departure) → \(leg.destination)"
+                    }(),
+                    contentType: doc.contentType,
+                    fileData: doc.fileData
+                )
+            }
+    }
+
+    private func matches(doc: LegDocument, category: FlightReportFolderCategory) -> Bool {
+        let file = doc.fileName.lowercased()
+        let type = doc.type
+
+        switch category {
+        case .briefings:
+            return type == .landingPermit ||
+                type == .handlingInvoice ||
+                type == .customsForm ||
+                type == .other ||
+                type == .briefingPack
+
+        case .flightFolios:
+            return type == .genDec || type == .loadSheet
+
+        case .fuelSlips:
+            return type == .fuelSlip || file.contains("fuel")
+
+        case .manifests:
+            return type == .paxManifest || type == .patientManifest || file.contains("manifest")
+
+        case .navlogs:
+            return type == .navLog || type == .foreFlightPack || file.contains("navlog") || file.contains("nav")
+
+        case .performances:
+            return type == .apgPerformance || type == .trainingForm || file.contains("perf") || file.contains("performance")
+        }
     }
 
     private func reportFolderRow(title: String, subtitle: String, systemImage: String) -> some View {
@@ -403,8 +463,8 @@ struct GeneratedFlightReportPDFView: View {
     @MainActor
     private func generatePDF() async {
         do {
-            let generator = try FlightReportPDFGenerator()
-            document = try generator.makeDocument(for: flight)
+            let generator = FlightReportPDFGenerator()
+            document = try generator.generatePDF(for: flight)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -423,7 +483,7 @@ struct FlightReportSummaryView: View {
                 if !flight.sic.isEmpty { LabeledContent("SIC", value: flight.sic) }
                 if !flight.cabinCrew.isEmpty { LabeledContent("Cabin Crew", value: flight.cabinCrew) }
                 if !flight.client.isEmpty { LabeledContent("Client", value: flight.client) }
-                LabeledContent("First Leg Date", value: flight.reportFolderDate.formatted(date: .abbreviated, time: .omitted))
+                LabeledContent("First Leg Date", value: flight.reportFolderDate.efbDate)
             }
 
             Section("Daily Sign On / Off") {
@@ -433,7 +493,7 @@ struct FlightReportSummaryView: View {
                 } else {
                     ForEach(flight.daySigns.sorted(by: { $0.date < $1.date })) { day in
                         VStack(alignment: .leading, spacing: 6) {
-                            Text(day.date.formatted(date: .abbreviated, time: .omitted))
+                            Text(day.date.efbDate)
                                 .font(.headline)
 
                             Text("Sign On: \(day.signOnTime.isEmpty ? "-" : day.signOnTime)")
@@ -453,7 +513,7 @@ struct FlightReportSummaryView: View {
                         Text("Leg \(leg.sequence): \(leg.departure) → \(leg.destination)")
                             .font(.headline)
 
-                        Text("Date: \(leg.date.formatted(date: .abbreviated, time: .omitted))")
+                        Text("Date: \(leg.date.efbDate)")
                             .foregroundStyle(.secondary)
 
                         Text("Call Sign: \(leg.callSign.isEmpty ? "-" : leg.callSign)")
@@ -504,6 +564,10 @@ struct FlightReportDocumentFolderView: View {
     let subtitle: String
     let documents: [FlightReportDocumentItem]
 
+    private var indexedDocuments: [(offset: Int, element: FlightReportDocumentItem)] {
+        Array(documents.enumerated())
+    }
+
     var body: some View {
         List {
             Section {
@@ -519,22 +583,32 @@ struct FlightReportDocumentFolderView: View {
                     description: Text("No linked documents in this folder yet.")
                 )
             } else {
-                ForEach(documents) { item in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(item.displayName)
-                            .font(.headline)
+                ForEach(indexedDocuments, id: \.element.id) { entry in
+                    let item = entry.element
 
-                        Text("Leg \(item.legSequence) • \(item.documentType)")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                    NavigationLink {
+                        FlightStoredDocumentView(item: item)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(item.displayName)
+                                .font(.headline)
 
-                        if !item.route.isEmpty {
-                            Text(item.route)
+                            Text("Leg \(item.legSequence) • \(item.documentType)")
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
+
+                            if !item.route.isEmpty {
+                                Text(item.route)
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            Text(item.isViewable ? "Tap to view" : "Stored but not previewable")
+                                .font(.caption)
+                                .foregroundColor(item.isViewable ? .secondary : .orange)
                         }
+                        .padding(.vertical, 4)
                     }
-                    .padding(.vertical, 4)
                 }
             }
         }
@@ -558,7 +632,6 @@ struct PDFKitView: UIViewRepresentable {
         uiView.document = document
     }
 }
-
 
 struct FlightReportYearBucket: Identifiable {
     let id = UUID()
@@ -605,6 +678,46 @@ struct FlightReportDocumentItem: Identifiable {
     let documentType: String
     let legSequence: Int
     let route: String
+    let contentType: String
+    let fileData: Data?
+
+    var isViewable: Bool {
+        guard let fileData, !fileData.isEmpty else { return false }
+        if PDFDocument(data: fileData) != nil { return true }
+        if UIImage(data: fileData) != nil { return true }
+        return false
+    }
+}
+
+struct FlightStoredDocumentView: View {
+    let item: FlightReportDocumentItem
+
+    var body: some View {
+        Group {
+            if let fileData = item.fileData, let pdf = PDFDocument(data: fileData) {
+                PDFKitView(document: pdf)
+            } else if let fileData = item.fileData, let image = UIImage(data: fileData) {
+                ScrollView([.horizontal, .vertical]) {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .padding()
+                }
+                .background(Color.black.opacity(0.02))
+            } else {
+                ContentUnavailableView(
+                    "Unable to preview document",
+                    systemImage: "doc.badge.questionmark",
+                    description: Text(item.fileData == nil || item.fileData?.isEmpty == true
+                        ? "No stored file data was found for this document."
+                        : "This document format is not previewable yet.")
+                )
+            }
+        }
+        .navigationTitle(item.displayName)
+        .navigationBarTitleDisplayMode(.inline)
+    }
 }
 
 private extension Flight {
@@ -621,55 +734,6 @@ private extension Flight {
 
     var firstPICSignatureDrawing: Data? {
         daySigns.sorted(by: { $0.date < $1.date }).first?.picSignOnDrawing
-    }
-
-    func documents(in category: FlightReportFolderCategory) -> [FlightReportDocumentItem] {
-        var items: [FlightReportDocumentItem] = []
-
-        for leg in legs.sorted(by: { $0.sequence < $1.sequence }) {
-            for doc in leg.documents {
-                if matches(doc: doc, category: category) {
-                    items.append(
-                        FlightReportDocumentItem(
-                            displayName: doc.fileName.isEmpty ? doc.type.rawValue : doc.fileName,
-                            documentType: doc.type.rawValue,
-                            legSequence: leg.sequence,
-                            route: "\(leg.departure) → \(leg.destination)"
-                        )
-                    )
-                }
-            }
-        }
-
-        return items
-    }
-
-    private func matches(doc: LegDocument, category: FlightReportFolderCategory) -> Bool {
-        let file = doc.fileName.lowercased()
-        let type = doc.type
-
-        switch category {
-        case .briefings:
-            return type == .landingPermit ||
-                type == .handlingInvoice ||
-                type == .customsForm ||
-                type == .other
-
-        case .flightFolios:
-            return type == .genDec || type == .loadSheet
-
-        case .fuelSlips:
-            return type == .fuelSlip || file.contains("fuel")
-
-        case .manifests:
-            return type == .paxManifest || file.contains("manifest")
-
-        case .navlogs:
-            return file.contains("navlog") || file.contains("nav")
-
-        case .performances:
-            return file.contains("perf") || file.contains("performance")
-        }
     }
 }
 
@@ -690,5 +754,5 @@ private extension Array {
     NavigationStack {
         ReportsHomeView()
     }
-    .modelContainer(for: [Flight.self, FlightLeg.self, FlightDaySign.self, LegDocument.self], inMemory: true)
+    .modelContainer(for: [Flight.self, FlightLeg.self, FlightDaySign.self, LegDocument.self, LegDelayEntry.self], inMemory: true)
 }

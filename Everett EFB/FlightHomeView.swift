@@ -62,17 +62,10 @@ struct FlightsHomeView: View {
 private struct FlightRow: View {
     let flight: Flight
 
-    private static let dateFmt: DateFormatter = {
-        let df = DateFormatter()
-        df.dateStyle = .medium
-        df.timeStyle = .none
-        return df
-    }()
-
     var body: some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(Self.dateFmt.string(from: flight.displayDate))
+                Text(flight.displayDate.efbDate)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
 

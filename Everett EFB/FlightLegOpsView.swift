@@ -12,6 +12,7 @@ struct FlightLegOpsView: View {
     private var airports: [Airport]
 
     @State private var showAddDocument = false
+    @State private var showDelayPicker = false
     @State private var signOffTarget: FlightDaySign?
 
     @State private var blockOffText = ""
@@ -26,6 +27,7 @@ struct FlightLegOpsView: View {
     @State private var upliftText = ""
     @State private var fuelInvoiceText = ""
     @State private var locSearch = ""
+    @State private var crewNoteText = ""
 
     var body: some View {
         Form {
@@ -39,7 +41,7 @@ struct FlightLegOpsView: View {
             Section {
                 HStack(spacing: 12) {
                     NavigationLink {
-                        LegDocumentsView(leg: leg)
+                        LegDocumentsView(leg: leg, flight: flight)
                     } label: {
                         Label("Documents", systemImage: "doc.text")
                             .frame(maxWidth: .infinity)
@@ -53,6 +55,54 @@ struct FlightLegOpsView: View {
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
+                }
+            }
+
+            Section("Delays") {
+                if leg.delays.isEmpty {
+                    Text("No delay codes added")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(leg.delays.sorted(by: { $0.delayNumber < $1.delayNumber })) { delay in
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text("Leg \(leg.sequence)")
+                                    .font(.subheadline.weight(.semibold))
+                                Spacer()
+                                Text("\(delay.delayNumber) / \(delay.code)")
+                                    .font(.subheadline.weight(.semibold))
+                            }
+
+                            Text(delay.descriptionText)
+                                .font(.subheadline)
+
+                            if !delay.noteGuidance.isEmpty {
+                                Text(delay.noteGuidance)
+                                    .font(.footnote)
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            if !delay.crewComment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                Text(delay.crewComment)
+                                    .font(.footnote)
+                            }
+                        }
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            Button("Delete", role: .destructive) {
+                                if let index = leg.delays.firstIndex(where: { $0.id == delay.id }) {
+                                    let removed = leg.delays.remove(at: index)
+                                    modelContext.delete(removed)
+                                    try? modelContext.save()
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Button {
+                    showDelayPicker = true
+                } label: {
+                    Label("Add Delay", systemImage: "plus.circle")
                 }
             }
 
@@ -157,6 +207,11 @@ struct FlightLegOpsView: View {
                 )
             }
 
+            Section("Notes") {
+                TextField("Type note", text: $crewNoteText, axis: .vertical)
+                    .lineLimit(3...6)
+            }
+
             Section("Finalize Leg") {
                 if leg.isFinalized {
                     Text("This leg is finalized.")
@@ -214,6 +269,11 @@ struct FlightLegOpsView: View {
                 AddLegDocumentView(leg: leg)
             }
         }
+        .sheet(isPresented: $showDelayPicker) {
+            NavigationStack {
+                DelayCodePickerView(leg: leg)
+            }
+        }
         .sheet(item: $signOffTarget) { record in
             NavigationStack {
                 FlightDaySignView(flight: flight, daySign: record, mode: .signOff)
@@ -232,15 +292,18 @@ struct FlightLegOpsView: View {
             upliftText = leg.uplift.map { String($0) } ?? ""
             fuelInvoiceText = leg.fuelInvoice
             locSearch = leg.loc
+            crewNoteText = leg.crewNote
         }
     }
 
     private var daySignRecord: FlightDaySign {
-        if let existing = flight.daySign(for: leg.date) {
+        let day = Calendar.current.startOfDay(for: leg.date)
+
+        if let existing = flight.daySign(for: day) {
             return existing
         }
 
-        let record = flight.ensureDaySign(for: leg.date)
+        let record = flight.ensureDaySign(for: day)
         modelContext.insert(record)
         return record
     }
@@ -268,6 +331,7 @@ struct FlightLegOpsView: View {
 
         leg.fuelInvoice = fuelInvoiceText.trimmingCharacters(in: .whitespacesAndNewlines)
         leg.loc = locSearch.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        leg.crewNote = crewNoteText.trimmingCharacters(in: .whitespacesAndNewlines)
 
         do {
             try modelContext.save()
@@ -315,5 +379,94 @@ struct FlightLegOpsView: View {
             }
             .prefix(8)
         )
+    }
+}
+
+private struct DelayCodePickerView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let leg: FlightLeg
+
+    var body: some View {
+        List {
+            ForEach(IATADelayCodeDatabase.grouped, id: \.category) { group in
+                Section(group.category) {
+                    ForEach(group.rows) { item in
+                        NavigationLink {
+                            DelayCodeCommentView(leg: leg, definition: item)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Text("\(item.delayNumber)")
+                                        .font(.subheadline.weight(.semibold))
+                                    Text(item.code)
+                                        .font(.subheadline.weight(.semibold))
+                                }
+
+                                Text(item.descriptionText)
+                                    .font(.subheadline)
+
+                                if !item.noteGuidance.isEmpty {
+                                    Text(item.noteGuidance)
+                                        .font(.footnote)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .navigationTitle("Delay Codes")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Close") {
+                    dismiss()
+                }
+            }
+        }
+    }
+}
+
+private struct DelayCodeCommentView: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
+
+    let leg: FlightLeg
+    let definition: IATADelayCodeDefinition
+
+    @State private var comment = ""
+
+    var body: some View {
+        Form {
+            Section("Delay Code") {
+                LabeledContent("Leg", value: "\(leg.sequence)")
+                LabeledContent("Number", value: "\(definition.delayNumber)")
+                LabeledContent("Code", value: definition.code)
+                Text(definition.descriptionText)
+
+                if !definition.noteGuidance.isEmpty {
+                    Text(definition.noteGuidance)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Section("Comment") {
+                TextField("Type comment", text: $comment, axis: .vertical)
+                    .lineLimit(3...6)
+            }
+        }
+        .navigationTitle("Add Delay")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Save") {
+                    leg.addDelay(from: definition, comment: comment)
+                    try? modelContext.save()
+                    dismiss()
+                }
+            }
+        }
     }
 }

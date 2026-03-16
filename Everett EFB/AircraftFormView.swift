@@ -20,6 +20,50 @@ struct AircraftFormView: View {
     @State private var lastCompleted: [AircraftDocumentType: Date?] = [:]
     @State private var expiry: [AircraftDocumentType: Date?] = [:]
 
+    private var titleText: String {
+        switch mode {
+        case .add:
+            return "Add Aircraft"
+        case .edit:
+            return "Edit Aircraft"
+        }
+    }
+
+    private func existingDocument(for type: AircraftDocumentType, in aircraft: Aircraft) -> AircraftDocument? {
+        aircraft.documents.first { $0.type == type }
+    }
+
+    private func loadValues() {
+        switch mode {
+        case .add:
+            registration = ""
+            type = ""
+            msn = ""
+
+            lastCompleted = [:]
+            expiry = [:]
+
+            for docType in AircraftDocumentType.allCases {
+                lastCompleted[docType] = nil
+                expiry[docType] = nil
+            }
+
+        case .edit(let aircraft):
+            registration = aircraft.registration
+            type = aircraft.type
+            msn = aircraft.modelSerialNumber
+
+            lastCompleted = [:]
+            expiry = [:]
+
+            for docType in AircraftDocumentType.allCases {
+                let existing = existingDocument(for: docType, in: aircraft)
+                lastCompleted[docType] = existing?.lastCompleted
+                expiry[docType] = existing?.expiry
+            }
+        }
+    }
+
     var body: some View {
 
         Form {
@@ -61,7 +105,10 @@ struct AircraftFormView: View {
             }
         }
 
-        .navigationTitle("Aircraft")
+        .navigationTitle(titleText)
+        .onAppear {
+            loadValues()
+        }
 
         .toolbar {
 
@@ -93,6 +140,29 @@ struct AircraftFormView: View {
         aircraft.registration = registration
         aircraft.type = type
         aircraft.modelSerialNumber = msn
+
+        for docType in AircraftDocumentType.allCases {
+            let completedDate = lastCompleted[docType] ?? nil
+            let expiryDate = expiry[docType] ?? nil
+
+            if let existing = existingDocument(for: docType, in: aircraft) {
+                existing.lastCompleted = completedDate
+                existing.expiry = expiryDate
+            } else {
+                let newDocument = AircraftDocument(
+                    type: docType,
+                    lastCompleted: completedDate,
+                    expiry: expiryDate
+                )
+                aircraft.documents.append(newDocument)
+            }
+        }
+
+        do {
+            try modelContext.save()
+        } catch {
+            print("❌ Aircraft save failed:", error)
+        }
 
         dismiss()
     }

@@ -15,6 +15,10 @@ struct FlightDaySignView: View {
     let mode: Mode
 
     @State private var signTimeText = ""
+    @State private var intermediateSignOffText = ""
+    @State private var intermediateSignOnText = ""
+    @State private var showSplitDutyPrompt = false
+    @State private var splitDutyValidationMessage: String?
 
     var body: some View {
         ScrollView {
@@ -52,9 +56,40 @@ struct FlightDaySignView: View {
                 Button("Cancel") { dismiss() }
             }
             ToolbarItem(placement: .confirmationAction) {
-                Button("Save") { save() }
+                Button("Save") { handleSaveTapped() }
                     .disabled(!canSave)
             }
+        }
+        .confirmationDialog(
+            "Was Split Duty used?",
+            isPresented: $showSplitDutyPrompt,
+            titleVisibility: .visible
+        ) {
+            Button("Yes") {
+                daySign.splitDutyStatus = .yes
+                splitDutyValidationMessage = "Enter Intermediate Sign Off (Local) and Intermediate Sign On (Local), then save again."
+            }
+
+            Button("No") {
+                daySign.splitDutyStatus = .notApplicable
+                intermediateSignOffText = ""
+                intermediateSignOnText = ""
+                commitSave()
+            }
+
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Before finalizing the day sign off, confirm whether the crew had Split Duty.")
+        }
+        .alert("Split Duty", isPresented: Binding(
+            get: { splitDutyValidationMessage != nil },
+            set: { if !$0 { splitDutyValidationMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) {
+                splitDutyValidationMessage = nil
+            }
+        } message: {
+            Text(splitDutyValidationMessage ?? "")
         }
         .onAppear {
             if mode == .signOn {
@@ -67,32 +102,56 @@ struct FlightDaySignView: View {
                 if daySign.sicSignOffName.isEmpty { daySign.sicSignOffName = flight.sic }
                 if daySign.cabinSignOffName.isEmpty { daySign.cabinSignOffName = flight.cabinCrew }
                 signTimeText = daySign.signOffTime
+                intermediateSignOffText = daySign.intermediateSignOffTime
+                intermediateSignOnText = daySign.intermediateSignOnTime
             }
         }
     }
 
     private var canSave: Bool {
         let validTime = TimeEntryHelper.normalizedDisplay(signTimeText) != nil
+
         if mode == .signOn {
             return validTime &&
                 daySign.picSignOnDrawing != nil &&
                 daySign.sicSignOnDrawing != nil &&
-                daySign.cabinSignOnDrawing != nil
-        } else {
-            return validTime &&
-                daySign.picSignOffDrawing != nil &&
-                daySign.sicSignOffDrawing != nil &&
-                daySign.cabinSignOffDrawing != nil
+                (!requiresCabinCrew || daySign.cabinSignOnDrawing != nil)
         }
+
+        let validSplitDutyFields: Bool
+        switch daySign.splitDutyStatus {
+        case .yes:
+            validSplitDutyFields =
+                TimeEntryHelper.normalizedDisplay(intermediateSignOffText) != nil &&
+                TimeEntryHelper.normalizedDisplay(intermediateSignOnText) != nil
+        case .no, .notApplicable, .notAsked:
+            validSplitDutyFields = true
+        }
+
+        return validTime &&
+            validSplitDutyFields &&
+            daySign.picSignOffDrawing != nil &&
+            daySign.sicSignOffDrawing != nil &&
+            (!requiresCabinCrew || daySign.cabinSignOffDrawing != nil)
     }
 
+    private var requiresCabinCrew: Bool {
+        let value = flight.cabinCrew.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return false }
+
+        let normalized = value.lowercased()
+        return normalized != "n/a" && normalized != "na" && normalized != "-"
+    }
+    
     private var headerCard: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(daySign.date.formatted(date: .complete, time: .omitted))
+            Text(daySign.date.efbDate)
                 .font(.headline)
             Text("Flight Report: \(flight.reportNumber)")
                 .foregroundStyle(.secondary)
             Text("Aircraft: \(flight.aircraftReg)")
+                .foregroundStyle(.secondary)
+            Text("Type of Flight: \(flight.flightType.rawValue)")
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -102,13 +161,13 @@ struct FlightDaySignView: View {
     }
 
     private var signTimeCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(mode == .signOn ? "Sign On Time" : "Sign Off Time")
+        VStack(alignment: .leading, spacing: 12) {
+            Text(mode == .signOn ? "Sign On Time (Local)" : "Sign Off Time (Local)")
                 .font(.headline)
 
             HStack {
-                Text("Time")
-                    .frame(width: 110, alignment: .leading)
+                Text("Time (Local)")
+                    .frame(width: 150, alignment: .leading)
 
                 TextField("hhmm", text: $signTimeText)
                     .keyboardType(.numberPad)
@@ -121,7 +180,62 @@ struct FlightDaySignView: View {
                     )
             }
 
-            Text("Enter as hhmm or hmm. It will save as HH:MM.")
+            if mode == .signOff {
+                Divider()
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Split Duty")
+                        .font(.headline)
+
+                    if daySign.splitDutyStatus == .notAsked {
+                        Text("You will be asked about Split Duty when saving Sign Off.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("Selection: \(daySign.splitDutyStatus == .notApplicable ? "No" : daySign.splitDutyStatus.rawValue)")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if daySign.splitDutyStatus == .yes {
+                        HStack {
+                            Text("Intermediate Sign Off (Local)")
+                                .frame(width: 220, alignment: .leading)
+
+                            TextField("hhmm", text: $intermediateSignOffText)
+                                .keyboardType(.numberPad)
+                                .padding(8)
+                                .frame(width: 120)
+                                .background(Color(.systemGray6))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .stroke(Color.gray.opacity(0.4))
+                                )
+                        }
+
+                        HStack {
+                            Text("Intermediate Sign On (Local)")
+                                .frame(width: 220, alignment: .leading)
+
+                            TextField("hhmm", text: $intermediateSignOnText)
+                                .keyboardType(.numberPad)
+                                .padding(8)
+                                .frame(width: 120)
+                                .background(Color(.systemGray6))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .stroke(Color.gray.opacity(0.4))
+                                )
+                        }
+
+                        Text("Total Split Duty will be calculated automatically on the flight report, including when it runs past midnight.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
+            Text("Enter all times as hhmm or hmm. They will save as HH:MM.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }
@@ -147,7 +261,10 @@ struct FlightDaySignView: View {
 
             signatureBlock(title: "PIC", name: picName, drawing: picDrawing)
             signatureBlock(title: "SIC / FO", name: sicName, drawing: sicDrawing)
-            signatureBlock(title: "Cabin Crew", name: cabinName, drawing: cabinDrawing)
+
+            if requiresCabinCrew {
+                signatureBlock(title: "Cabin Crew", name: cabinName, drawing: cabinDrawing)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -184,7 +301,26 @@ struct FlightDaySignView: View {
         )
     }
 
-    private func save() {
+    private func handleSaveTapped() {
+        if mode == .signOff && daySign.splitDutyStatus == .notAsked {
+            showSplitDutyPrompt = true
+            return
+        }
+
+        if mode == .signOff && daySign.splitDutyStatus == .yes {
+            let off = TimeEntryHelper.normalizedDisplay(intermediateSignOffText)
+            let on = TimeEntryHelper.normalizedDisplay(intermediateSignOnText)
+
+            guard off != nil, on != nil else {
+                splitDutyValidationMessage = "Enter valid Intermediate Sign Off and Intermediate Sign On times before saving Sign Off."
+                return
+            }
+        }
+
+        commitSave()
+    }
+
+    private func commitSave() {
         let time = TimeEntryHelper.normalizedDisplay(signTimeText) ?? signTimeText
 
         if mode == .signOn {
@@ -197,6 +333,17 @@ struct FlightDaySignView: View {
             daySign.picSignOffName = flight.pic
             daySign.sicSignOffName = flight.sic
             daySign.cabinSignOffName = flight.cabinCrew
+
+            switch daySign.splitDutyStatus {
+            case .yes:
+                daySign.intermediateSignOffTime = TimeEntryHelper.normalizedDisplay(intermediateSignOffText) ?? intermediateSignOffText
+                daySign.intermediateSignOnTime = TimeEntryHelper.normalizedDisplay(intermediateSignOnText) ?? intermediateSignOnText
+            case .no, .notApplicable:
+                daySign.intermediateSignOffTime = ""
+                daySign.intermediateSignOnTime = ""
+            case .notAsked:
+                break
+            }
         }
 
         do {

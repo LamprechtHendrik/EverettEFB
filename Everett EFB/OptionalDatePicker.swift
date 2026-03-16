@@ -22,13 +22,17 @@ struct OptionalDatePicker: View {
             ))
 
             if enabled {
-                DatePicker("", selection: Binding(
-                    get: { date ?? internalDate },
-                    set: { newValue in
-                        internalDate = newValue
-                        date = newValue
-                    }
-                ), displayedComponents: .date)
+                DatePicker(
+                    "",
+                    selection: Binding(
+                        get: { date ?? internalDate },
+                        set: { newValue in
+                            internalDate = newValue
+                            date = newValue
+                        }
+                    ),
+                    displayedComponents: .date
+                )
                 .datePickerStyle(.compact)
             }
         }

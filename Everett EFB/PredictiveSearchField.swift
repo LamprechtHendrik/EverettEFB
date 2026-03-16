@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct PredictiveSearchField<Item: Identifiable>: View {
     let title: String
@@ -9,16 +10,24 @@ struct PredictiveSearchField<Item: Identifiable>: View {
     let onSelect: (Item) -> Void
 
     @State private var isExpanded = false
+    @FocusState private var isTextFieldFocused: Bool
+    @State private var isCommittingSelection = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             TextField(title, text: $text)
+                .focused($isTextFieldFocused)
                 .textInputAutocapitalization(.characters)
                 .autocorrectionDisabled()
                 .onTapGesture {
                     isExpanded = true
+                    isTextFieldFocused = true
                 }
                 .onChange(of: text) { _, newValue in
+                    if isCommittingSelection {
+                        isCommittingSelection = false
+                        return
+                    }
                     isExpanded = !newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 }
 
@@ -26,9 +35,13 @@ struct PredictiveSearchField<Item: Identifiable>: View {
                 VStack(spacing: 0) {
                     ForEach(suggestions) { item in
                         Button {
+                            let value = displayText(item)
+                            isCommittingSelection = true
+                            text = value
                             onSelect(item)
-                            text = displayText(item)
                             isExpanded = false
+                            isTextFieldFocused = false
+                            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
                         } label: {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(displayText(item))

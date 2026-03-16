@@ -21,12 +21,20 @@ struct FlightFormView: View {
     @State private var sic = ""
     @State private var cabinCrew = ""
     @State private var client = ""
+    @State private var flightType: FlightType = .nonScheduled
+
+    // Compliance overrides
+    @State private var aircraftNR: [String: Bool] = [:]
+    @State private var picNR: [String: Bool] = [:]
+    @State private var sicNR: [String: Bool] = [:]
+    @State private var cabinNR: [String: Bool] = [:]
 
     // Dynamic legs
     @State private var legs: [LegDraft] = [LegDraft(sequence: 1)]
 
     var body: some View {
         Form {
+
             Section("Flight") {
                 TextField("Flight report number", text: $reportNumber)
                     .textInputAutocapitalization(.characters)
@@ -43,6 +51,16 @@ struct FlightFormView: View {
                     }
                 )
 
+                if let selectedAircraft {
+                    aircraftStatusRow(aircraft: selectedAircraft)
+
+                    complianceIssueSection(
+                        title: "Aircraft Documents",
+                        issues: aircraftIssues(for: selectedAircraft),
+                        overrides: $aircraftNR
+                    )
+                }
+
                 PredictiveSearchField(
                     title: "PIC (Pilot)",
                     text: $pic,
@@ -53,6 +71,16 @@ struct FlightFormView: View {
                         pic = selected.fullDisplayName
                     }
                 )
+
+                if let selectedPIC {
+                    crewStatusRow(title: "PIC Status", member: selectedPIC)
+
+                    complianceIssueSection(
+                        title: "PIC Documents",
+                        issues: crewIssues(for: selectedPIC, prefix: "pic"),
+                        overrides: $picNR
+                    )
+                }
 
                 PredictiveSearchField(
                     title: "FO / SIC (Pilot)",
@@ -65,6 +93,16 @@ struct FlightFormView: View {
                     }
                 )
 
+                if let selectedSIC {
+                    crewStatusRow(title: "SIC Status", member: selectedSIC)
+
+                    complianceIssueSection(
+                        title: "SIC Documents",
+                        issues: crewIssues(for: selectedSIC, prefix: "sic"),
+                        overrides: $sicNR
+                    )
+                }
+
                 PredictiveSearchField(
                     title: "Cabin crew",
                     text: $cabinCrew,
@@ -76,49 +114,60 @@ struct FlightFormView: View {
                     }
                 )
 
+                if let selectedCabinCrew {
+                    crewStatusRow(title: "Cabin Crew Status", member: selectedCabinCrew)
+
+                    complianceIssueSection(
+                        title: "Cabin Crew Documents",
+                        issues: crewIssues(for: selectedCabinCrew, prefix: "cabin"),
+                        overrides: $cabinNR
+                    )
+                }
+
                 TextField("Client", text: $client)
-                    .autocorrectionDisabled()
+
+                Picker("Type of flight", selection: $flightType) {
+                    ForEach(FlightType.allCases) { type in
+                        Text(type.rawValue).tag(type)
+                    }
+                }
             }
 
             Section("Legs") {
-                ForEach($legs) { $leg in
+                ForEach(legs.indices, id: \.self) { index in
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("Leg \(leg.sequence)")
+                        Text("Leg \(legs[index].sequence)")
                             .font(.headline)
 
-                        DatePicker("Date", selection: $leg.date, displayedComponents: .date)
+                        DatePicker("Date", selection: $legs[index].date, displayedComponents: .date)
 
-                        DatePicker("Departure time", selection: $leg.departureTime, displayedComponents: .hourAndMinute)
+                        DatePicker("Departure time", selection: $legs[index].departureTime, displayedComponents: .hourAndMinute)
 
-                        TextField("Call sign", text: $leg.callSign)
-                            .textInputAutocapitalization(.characters)
-                            .autocorrectionDisabled()
+                        TextField("Call sign", text: $legs[index].callSign)
 
                         PredictiveSearchField(
                             title: "Departure",
-                            text: $leg.departure,
-                            suggestions: filteredAirports(for: leg.departure),
+                            text: $legs[index].departure,
+                            suggestions: filteredAirports(for: legs[index].departure),
                             displayText: { $0.preferredCode },
                             secondaryText: { "\($0.secondaryDisplay) • \($0.name)" },
                             onSelect: { selected in
-                                leg.departure = selected.preferredCode
+                                legs[index].departure = selected.preferredCode
                             }
                         )
 
                         PredictiveSearchField(
                             title: "Destination",
-                            text: $leg.destination,
-                            suggestions: filteredAirports(for: leg.destination),
+                            text: $legs[index].destination,
+                            suggestions: filteredAirports(for: legs[index].destination),
                             displayText: { $0.preferredCode },
                             secondaryText: { "\($0.secondaryDisplay) • \($0.name)" },
                             onSelect: { selected in
-                                leg.destination = selected.preferredCode
+                                legs[index].destination = selected.preferredCode
                             }
                         )
                     }
-                    .padding(.vertical, 6)
                 }
-                .onDelete(perform: deleteLegs)
 
                 Button {
                     addLeg()
@@ -140,127 +189,224 @@ struct FlightFormView: View {
         }
     }
 
-    // MARK: - Filtering
+    // MARK: Selected Aircraft
+
+    private var selectedAircraft: Aircraft? {
+        aircraft.first { $0.registration.lowercased() == aircraftReg.lowercased() }
+    }
+
+    private func aircraftStatusRow(aircraft: Aircraft) -> some View {
+        HStack {
+            VStack(alignment: .leading) {
+                Text("Aircraft Status").font(.subheadline.weight(.semibold))
+                Text("\(aircraft.type) • Reg \(aircraft.registration)")
+                    .font(.caption)
+            }
+
+            Spacer()
+
+            StatusBadge(status: aircraft.overallStatus(cautionDays: 30))
+        }
+    }
+
+    // MARK: Selected Crew
+
+    private var selectedPIC: CrewMember? { selectedCrewMember(named: pic, role: .pilot) }
+    private var selectedSIC: CrewMember? { selectedCrewMember(named: sic, role: .pilot) }
+    private var selectedCabinCrew: CrewMember? { selectedCrewMember(named: cabinCrew, role: .cabinCrew) }
+
+    private func selectedCrewMember(named displayName: String, role: CrewRole) -> CrewMember? {
+        crew.first { $0.role == role && $0.fullDisplayName.lowercased() == displayName.lowercased() }
+    }
+
+    private func crewStatusRow(title: String, member: CrewMember) -> some View {
+        HStack {
+            VStack(alignment: .leading) {
+                Text(title).font(.subheadline.weight(.semibold))
+                Text("\(member.role.rawValue) • Lic \(member.licenseNumber)")
+                    .font(.caption)
+            }
+
+            Spacer()
+
+            StatusBadge(status: member.overallStatus(cautionDays: 30))
+        }
+    }
+
+    // MARK: Compliance Issues
+
+    struct FlightComplianceIssue: Identifiable {
+        let id: String
+        let title: String
+        let subtitle: String
+        let status: ComplianceStatus
+    }
+
+    private func crewIssues(for member: CrewMember, prefix: String) -> [FlightComplianceIssue] {
+        var issues: [FlightComplianceIssue] = []
+
+        let recencyChecks: [(String, Bool)] = [
+            ("Line training record", member.lineTrainingRecord),
+            ("Line training report", member.lineTrainingReport),
+            ("Induction checklist", member.inductionChecklist),
+            ("CV", member.cv),
+            ("Personal data sheet", member.personalDataSheet),
+            ("Drug and alcohol policy", member.drugAndAlcoholPolicy),
+            ("Internet usage policy", member.internetUsagePolicy)
+        ]
+
+        for (title, ok) in recencyChecks where !ok {
+            issues.append(.init(id: "\(prefix)-rec-\(title)", title: title, subtitle: "Recency incomplete", status: .expired))
+        }
+
+        for training in member.trainings {
+            let status = training.status()
+            guard status == .expired else { continue }
+
+            issues.append(.init(
+                id: "\(prefix)-train-\(training.type.rawValue)",
+                title: training.type.rawValue,
+                subtitle: training.expiry?.formatted() ?? "No expiry",
+                status: status
+            ))
+        }
+
+        return issues
+    }
+
+    private func aircraftIssues(for aircraft: Aircraft) -> [FlightComplianceIssue] {
+        aircraft.documents.compactMap { doc in
+            let status = Compliance.status(forExpiry: doc.expiry)
+            guard status == .expired else { return nil }
+
+            return .init(
+                id: "aircraft-\(doc.type.rawValue)",
+                title: doc.type.rawValue,
+                subtitle: doc.expiry?.formatted() ?? "No expiry",
+                status: status
+            )
+        }
+    }
+
+    @ViewBuilder
+    private func complianceIssueSection(
+        title: String,
+        issues: [FlightComplianceIssue],
+        overrides: Binding<[String: Bool]>
+    ) -> some View {
+        if !issues.isEmpty {
+            VStack(alignment: .leading) {
+                Text(title).font(.subheadline.weight(.semibold))
+
+                ForEach(issues) { issue in
+                    VStack(alignment: .leading) {
+                        HStack {
+                            VStack(alignment: .leading) {
+                                Text(issue.title).font(.subheadline)
+                                Text(issue.subtitle).font(.caption).foregroundStyle(.secondary)
+                            }
+
+                            Spacer()
+
+                            StatusBadge(status: issue.status)
+                        }
+
+                        Toggle("N/R for flight", isOn: Binding(
+                            get: { overrides.wrappedValue[issue.id] ?? false },
+                            set: { overrides.wrappedValue[issue.id] = $0 }
+                        ))
+                        .font(.caption)
+                    }
+                    .padding(8)
+                    .background(Color(.systemGray6))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+            }
+        }
+    }
+
+    // MARK: Filtering
 
     private var filteredAircraft: [Aircraft] {
-        let q = aircraftReg.trimmed.lowercased()
+        let q = aircraftReg.lowercased()
         guard !q.isEmpty else { return Array(aircraft.prefix(8)) }
 
-        return Array(
-            aircraft.filter {
-                $0.registration.lowercased().contains(q) ||
-                $0.type.lowercased().contains(q) ||
-                $0.modelSerialNumber.lowercased().contains(q)
-            }
-            .prefix(8)
-        )
+        return aircraft.filter {
+            $0.registration.lowercased().contains(q) ||
+            $0.type.lowercased().contains(q)
+        }
     }
 
-    private var filteredPICCrew: [CrewMember] {
-        filterCrew(query: pic, role: .pilot)
-    }
-
-    private var filteredSICCrew: [CrewMember] {
-        filterCrew(query: sic, role: .pilot)
-    }
-
-    private var filteredCabinCrew: [CrewMember] {
-        filterCrew(query: cabinCrew, role: .cabinCrew)
-    }
+    private var filteredPICCrew: [CrewMember] { filterCrew(query: pic, role: .pilot) }
+    private var filteredSICCrew: [CrewMember] { filterCrew(query: sic, role: .pilot) }
+    private var filteredCabinCrew: [CrewMember] { filterCrew(query: cabinCrew, role: .cabinCrew) }
 
     private func filterCrew(query: String, role: CrewRole) -> [CrewMember] {
-        let q = query.trimmed.lowercased()
+        let q = query.lowercased()
         let pool = crew.filter { $0.role == role }
 
         guard !q.isEmpty else { return Array(pool.prefix(8)) }
 
-        return Array(
-            pool.filter {
-                $0.name.lowercased().contains(q) ||
-                $0.surname.lowercased().contains(q) ||
-                $0.fullDisplayName.lowercased().contains(q) ||
-                $0.licenseNumber.lowercased().contains(q)
-            }
-            .prefix(8)
-        )
-    }
-
-    private func filteredAirports(for query: String) -> [Airport] {
-        let q = query.trimmed.lowercased()
-        guard !q.isEmpty else { return Array(airports.prefix(8)) }
-
-        return Array(
-            airports.filter {
-                $0.searchBlob.contains(q)
-            }
-            .prefix(8)
-        )
-    }
-
-    // MARK: - Validation
-
-    private var canSave: Bool {
-        !reportNumber.trimmed.isEmpty &&
-        !aircraftReg.trimmed.isEmpty &&
-        !pic.trimmed.isEmpty &&
-        legs.allSatisfy {
-            !$0.departure.trimmed.isEmpty &&
-            !$0.destination.trimmed.isEmpty
+        return pool.filter {
+            $0.name.lowercased().contains(q) ||
+            $0.surname.lowercased().contains(q) ||
+            $0.fullDisplayName.lowercased().contains(q)
         }
     }
 
-    // MARK: - Legs
+    private func filteredAirports(for query: String) -> [Airport] {
+        let q = query.lowercased()
+        guard !q.isEmpty else { return Array(airports.prefix(8)) }
+
+        return airports.filter { $0.searchBlob.contains(q) }
+    }
+
+    // MARK: Validation
+
+    private var canSave: Bool {
+        !reportNumber.isEmpty && !aircraftReg.isEmpty && !pic.isEmpty
+    }
+
+    // MARK: Legs
 
     private func addLeg() {
         let next = (legs.map(\.sequence).max() ?? 0) + 1
         legs.append(LegDraft(sequence: next))
     }
 
-    private func deleteLegs(at offsets: IndexSet) {
-        legs.remove(atOffsets: offsets)
-        for i in legs.indices {
-            legs[i].sequence = i + 1
-        }
-    }
-
-    // MARK: - Save
+    // MARK: Save
 
     private func save() {
         let flight = Flight(
-            reportNumber: reportNumber.trimmedUpper,
-            aircraftReg: aircraftReg.trimmedUpper,
-            pic: pic.trimmed,
-            sic: sic.trimmed,
-            cabinCrew: cabinCrew.trimmed,
-            client: client.trimmed,
+            reportNumber: reportNumber.uppercased(),
+            aircraftReg: aircraftReg.uppercased(),
+            pic: pic,
+            sic: sic,
+            cabinCrew: cabinCrew,
+            client: client,
+            flightTypeRaw: flightType.rawValue,
             isClosed: false
         )
 
-        let sortedDrafts = legs.sorted(by: { $0.sequence < $1.sequence })
-        for d in sortedDrafts {
+        for d in legs {
             let leg = FlightLeg(
                 sequence: d.sequence,
                 date: d.date,
                 departureTime: d.departureTime,
-                callSign: d.callSign.trimmedUpper,
-                departure: d.departure.trimmedUpper,
-                destination: d.destination.trimmedUpper
+                callSign: d.callSign.uppercased(),
+                departure: d.departure.uppercased(),
+                destination: d.destination.uppercased()
             )
+
             flight.legs.append(leg)
         }
 
         modelContext.insert(flight)
 
-        do {
-            try modelContext.save()
-            dismiss()
-        } catch {
-            print("❌ Flight save failed:", error)
-        }
+        try? modelContext.save()
+        dismiss()
     }
 }
-
-// MARK: - Draft model
 
 private struct LegDraft: Identifiable {
     let id = UUID()
@@ -270,16 +416,4 @@ private struct LegDraft: Identifiable {
     var callSign: String = ""
     var departure: String = ""
     var destination: String = ""
-}
-
-// MARK: - String helpers
-
-private extension String {
-    var trimmed: String {
-        trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    var trimmedUpper: String {
-        trimmed.uppercased()
-    }
 }

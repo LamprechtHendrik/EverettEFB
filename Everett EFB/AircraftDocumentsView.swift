@@ -78,11 +78,6 @@ private struct AircraftDocRowView: View {
     let expiry: Date?
     let status: ComplianceStatus
 
-    private let df: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "d/M/yyyy"
-        return f
-    }()
 
     var body: some View {
         HStack(spacing: 12) {
@@ -91,12 +86,12 @@ private struct AircraftDocRowView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             // Last
-            Text(last.map(df.string) ?? "—")
+            Text(last?.efbDate ?? "—")
                 .foregroundStyle(.secondary)
                 .frame(width: 110, alignment: .leading)
 
             // Expiry
-            Text(expiry.map(df.string) ?? "—")
+            Text(expiry?.efbDate ?? "—")
                 .foregroundStyle(.secondary)
                 .frame(width: 110, alignment: .leading)
 

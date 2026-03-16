@@ -40,7 +40,7 @@ struct Compliance {
     }
 
     static func status(forBools bools: [Bool]) -> ComplianceStatus {
-        bools.contains(false) ? .caution : .ok
+        bools.contains(false) ? .expired : .ok
     }
 }
 

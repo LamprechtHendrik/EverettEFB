@@ -25,11 +25,13 @@ enum TrainingType: String, CaseIterable, Identifiable, Codable {
 
 @Model
 final class CrewMember {
+
     var name: String
     var surname: String
     var licenseNumber: String
     var roleRaw: String
 
+    // Recency / required company documents
     var lineTrainingRecord: Bool
     var lineTrainingReport: Bool
     var inductionChecklist: Bool
@@ -79,37 +81,70 @@ final class CrewMember {
 
 @Model
 final class TrainingRecord {
+
     var typeRaw: String
     var lastConducted: Date?
     var expiry: Date?
 
-    init(type: TrainingType, lastConducted: Date? = nil, expiry: Date? = nil) {
+    // Allows training to be marked N/A
+    var isNotApplicable: Bool
+
+    init(
+        type: TrainingType,
+        lastConducted: Date? = nil,
+        expiry: Date? = nil,
+        isNotApplicable: Bool = false
+    ) {
         self.typeRaw = type.rawValue
         self.lastConducted = lastConducted
         self.expiry = expiry
+        self.isNotApplicable = isNotApplicable
     }
 
     var type: TrainingType {
         TrainingType(rawValue: typeRaw) ?? .flightOperationsManual
     }
 }
-import Foundation
 
 extension TrainingRecord {
+
     func status(asOf: Date = Date(), cautionDays: Int = 30) -> ComplianceStatus {
-        Compliance.status(forExpiry: expiry, asOf: asOf, cautionDays: cautionDays)
+
+        // N/A overrides everything
+        if isNotApplicable {
+            return .ok
+        }
+
+        return Compliance.status(
+            forExpiry: expiry,
+            asOf: asOf,
+            cautionDays: cautionDays
+        )
     }
 }
 
 extension CrewMember {
 
     func trainingStatus(asOf: Date = Date(), cautionDays: Int = 30) -> ComplianceStatus {
-        let statuses = trainings.map { $0.status(asOf: asOf, cautionDays: cautionDays) }
+
+        // Ignore N/A trainings
+        let applicableTrainings = trainings.filter { !$0.isNotApplicable }
+
+        if applicableTrainings.isEmpty {
+            return .caution
+        }
+
+        let statuses = applicableTrainings.map {
+            $0.status(asOf: asOf, cautionDays: cautionDays)
+        }
+
         return Compliance.worst(statuses)
     }
 
     func recencyBoolStatus() -> ComplianceStatus {
-        Compliance.status(forBools: [
+
+        // If ANY required recency item is missing -> red
+        return Compliance.status(forBools: [
             lineTrainingRecord,
             lineTrainingReport,
             inductionChecklist,
@@ -121,8 +156,11 @@ extension CrewMember {
     }
 
     func overallStatus(asOf: Date = Date(), cautionDays: Int = 30) -> ComplianceStatus {
-        let a = trainingStatus(asOf: asOf, cautionDays: cautionDays)
-        let b = recencyBoolStatus()
-        return a.rawValue >= b.rawValue ? a : b
+
+        let training = trainingStatus(asOf: asOf, cautionDays: cautionDays)
+        let recency = recencyBoolStatus()
+
+        // Worst status wins
+        return Compliance.worst([training, recency])
     }
 }

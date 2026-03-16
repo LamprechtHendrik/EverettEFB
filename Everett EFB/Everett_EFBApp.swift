@@ -17,7 +17,9 @@ struct Everett_EFBApp: App {
                 Flight.self,
                 FlightLeg.self,
                 LegDocument.self,
-                FlightDaySign.self
+                FlightDaySign.self,
+                LegDelayEntry.self
+                
             ]
         )
     }

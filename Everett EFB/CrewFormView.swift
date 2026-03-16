@@ -27,6 +27,7 @@ struct CrewFormView: View {
 
     @State private var lastConducted: [TrainingType: Date?] = [:]
     @State private var expiry: [TrainingType: Date?] = [:]
+    @State private var trainingNA: [TrainingType: Bool] = [:]
 
     private var title: String {
         switch mode {
@@ -49,7 +50,7 @@ struct CrewFormView: View {
                 }
             }
 
-            Section("Recencies (Yes/No)") {
+            Section("Recencies") {
                 Toggle("Line training record", isOn: $lineTrainingRecord)
                 Toggle("Line training report", isOn: $lineTrainingReport)
                 Toggle("Induction checklist", isOn: $inductionChecklist)
@@ -59,26 +60,43 @@ struct CrewFormView: View {
                 Toggle("Internet usage policy", isOn: $internetUsagePolicy)
             }
 
-            Section("Training (Last conducted + Expiry)") {
+            Section("Training") {
                 ForEach(TrainingType.allCases) { t in
                     VStack(alignment: .leading, spacing: 10) {
-                        Text(t.rawValue).font(.headline)
+                        Text(t.rawValue)
+                            .font(.headline)
 
-                        OptionalDatePicker(
-                            title: "Last conducted",
-                            date: Binding(
-                                get: { lastConducted[t] ?? nil },
-                                set: { lastConducted[t] = $0 }
+                        Toggle(
+                            "N/A",
+                            isOn: Binding(
+                                get: { trainingNA[t] ?? false },
+                                set: { newValue in
+                                    trainingNA[t] = newValue
+                                    if newValue {
+                                        lastConducted[t] = nil
+                                        expiry[t] = nil
+                                    }
+                                }
                             )
                         )
 
-                        OptionalDatePicker(
-                            title: "Expiry date",
-                            date: Binding(
-                                get: { expiry[t] ?? nil },
-                                set: { expiry[t] = $0 }
+                        if !(trainingNA[t] ?? false) {
+                            RequiredDatePicker(
+                                title: "Last conducted",
+                                date: Binding(
+                                    get: { (lastConducted[t] ?? nil) ?? Date() },
+                                    set: { lastConducted[t] = $0 }
+                                )
                             )
-                        )
+
+                            RequiredDatePicker(
+                                title: "Expiry date",
+                                date: Binding(
+                                    get: { (expiry[t] ?? nil) ?? Date() },
+                                    set: { expiry[t] = $0 }
+                                )
+                            )
+                        }
                     }
                     .padding(.vertical, 6)
                 }
@@ -104,6 +122,7 @@ struct CrewFormView: View {
         for t in TrainingType.allCases {
             lastConducted[t] = nil
             expiry[t] = nil
+            trainingNA[t] = false
         }
 
         guard case .edit(let member) = mode else { return }
@@ -125,6 +144,7 @@ struct CrewFormView: View {
             if let t = TrainingType(rawValue: tr.typeRaw) {
                 lastConducted[t] = tr.lastConducted
                 expiry[t] = tr.expiry
+                trainingNA[t] = tr.isNotApplicable
             }
         }
     }
@@ -160,18 +180,25 @@ struct CrewFormView: View {
         for tr in member.trainings { existingByType[tr.typeRaw] = tr }
 
         for t in TrainingType.allCases {
-            let lc = lastConducted[t] ?? nil
-            let ex = expiry[t] ?? nil
-            let shouldHaveRow = (lc != nil) || (ex != nil)
+            let isNA = trainingNA[t] ?? false
+            let lc = isNA ? nil : ((lastConducted[t] ?? nil) ?? Date())
+            let ex = isNA ? nil : ((expiry[t] ?? nil) ?? Date())
+            let shouldHaveRow = isNA || lc != nil || ex != nil
             let key = t.rawValue
 
             if shouldHaveRow {
                 if let row = existingByType[key] {
+                    row.isNotApplicable = isNA
                     row.lastConducted = lc
                     row.expiry = ex
                 } else {
                     member.trainings.append(
-                        TrainingRecord(type: t, lastConducted: lc, expiry: ex)
+                        TrainingRecord(
+                            type: t,
+                            lastConducted: lc,
+                            expiry: ex,
+                            isNotApplicable: isNA
+                        )
                     )
                 }
             } else {
@@ -184,18 +211,25 @@ struct CrewFormView: View {
         }
 
         do {
-            let preSave = (try? modelContext.fetchCount(FetchDescriptor<CrewMember>())) ?? -1
-            print("🔎 After insert, before save, crew count:", preSave)
-
             try modelContext.save()
-
-            let postSave = (try? modelContext.fetchCount(FetchDescriptor<CrewMember>())) ?? -1
-            print("✅ After save, crew count:", postSave)
-
             dismiss()
         } catch {
             print("❌ Crew save failed:", error)
         }
+    }
+}
+
+private struct RequiredDatePicker: View {
+    let title: String
+    @Binding var date: Date
+
+    var body: some View {
+        DatePicker(
+            title,
+            selection: $date,
+            displayedComponents: .date
+        )
+        .datePickerStyle(.compact)
     }
 }
 

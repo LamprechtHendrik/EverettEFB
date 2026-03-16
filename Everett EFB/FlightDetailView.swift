@@ -1,8 +1,16 @@
 import SwiftUI
 import SwiftData
+import PDFKit
+import PencilKit
 
 struct FlightDetailView: View {
     @Environment(\.modelContext) private var modelContext
+
+    @Query(sort: [SortDescriptor(\Aircraft.registration)])
+    private var aircraft: [Aircraft]
+
+    @Query(sort: [SortDescriptor(\CrewMember.surname), SortDescriptor(\CrewMember.name)])
+    private var crew: [CrewMember]
 
     @Bindable var flight: Flight
 
@@ -12,6 +20,8 @@ struct FlightDetailView: View {
     @State private var signOnTarget: FlightDaySign?
     @State private var signOffTarget: FlightDaySign?
     @State private var showFinalizeAlert = false
+    @State private var showDispatchDocument = false
+    @State private var dispatchSignTarget: FlightDaySign?
 
     var body: some View {
         List {
@@ -69,6 +79,28 @@ struct FlightDetailView: View {
                         Text(dayGroup.day.formatted(date: .complete, time: .omitted))
                     }
                 }
+            }
+
+            Section("Dispatch Document") {
+                Button {
+                    showDispatchDocument = true
+                } label: {
+                    Label("Open Dispatch Document", systemImage: "doc.text.viewfinder")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.borderedProminent)
+
+                Button {
+                    dispatchSignTarget = existingOrEnsuredRecord(for: flight.displayDate)
+                } label: {
+                    Label("Sign Dispatch Document", systemImage: "signature")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.bordered)
+
+                Text("Dispatch package access and captain signing will be launched from here, in the same way day sign-on and sign-off are launched from this flight detail view.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Finalize Flight Report") {
@@ -141,6 +173,29 @@ struct FlightDetailView: View {
                 FlightDaySignView(flight: flight, daySign: record, mode: .signOff)
             }
         }
+        .sheet(isPresented: $showDispatchDocument) {
+            NavigationStack {
+                GeneratedDispatchPDFView(
+                    flight: flight,
+                    aircraft: linkedAircraft,
+                    pic: linkedPIC,
+                    sic: linkedSIC,
+                    cabinCrew: linkedCabinCrew
+                )
+            }
+        }
+        .sheet(item: $dispatchSignTarget) { record in
+            NavigationStack {
+                DispatchDocumentSignView(
+                    flight: flight,
+                    daySign: record,
+                    aircraft: linkedAircraft,
+                    pic: linkedPIC,
+                    sic: linkedSIC,
+                    cabinCrew: linkedCabinCrew
+                )
+            }
+        }
         .alert("Delete leg?", isPresented: Binding(
             get: { deleteLegTarget != nil },
             set: { if !$0 { deleteLegTarget = nil } }
@@ -166,6 +221,35 @@ struct FlightDetailView: View {
             Button("Cancel", role: .cancel) { }
         } message: {
             Text("Once finalized, this flight becomes read-only.")
+        }
+    }
+
+    private var linkedAircraft: Aircraft? {
+        let reg = flight.aircraftReg.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !reg.isEmpty else { return nil }
+        return aircraft.first {
+            $0.registration.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == reg
+        }
+    }
+
+    private var linkedPIC: CrewMember? {
+        linkedCrewMember(named: flight.pic)
+    }
+
+    private var linkedSIC: CrewMember? {
+        linkedCrewMember(named: flight.sic)
+    }
+
+    private var linkedCabinCrew: CrewMember? {
+        linkedCrewMember(named: flight.cabinCrew)
+    }
+
+    private func linkedCrewMember(named displayName: String) -> CrewMember? {
+        let cleaned = displayName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !cleaned.isEmpty else { return nil }
+
+        return crew.first {
+            $0.fullDisplayName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == cleaned
         }
     }
 
@@ -233,7 +317,7 @@ struct FlightDetailView: View {
             }
 
             if !record.allSignedOn {
-                Text("The first leg of this day cannot be filled in until all 3 crew have signed on.")
+                Text("The first leg of this day cannot be filled in until all crew have signed on.")
                     .font(.footnote)
                     .foregroundStyle(.orange)
             } else if !record.allSignedOff && !canSignOff {
@@ -299,7 +383,7 @@ struct FlightDetailView: View {
                     Text(leg.callSign)
                 }
 
-                Text(leg.date.formatted(date: .abbreviated, time: .omitted))
+                Text(leg.date.efbDate)
                     .foregroundStyle(.secondary)
 
                 if leg.isFinalized {
@@ -375,6 +459,179 @@ struct FlightDetailView: View {
             try modelContext.save()
         } catch {
             print("❌ Failed to \(what):", error)
+        }
+    }
+}
+
+private struct GeneratedDispatchPDFView: View {
+    let flight: Flight
+    let aircraft: Aircraft?
+    let pic: CrewMember?
+    let sic: CrewMember?
+    let cabinCrew: CrewMember?
+
+    @State private var document: PDFDocument?
+    @State private var errorMessage: String?
+
+    var body: some View {
+        Group {
+            if let document {
+                PDFKitView(document: document)
+            } else if let errorMessage {
+                ContentUnavailableView(
+                    "Unable to generate dispatch package",
+                    systemImage: "exclamationmark.triangle",
+                    description: Text(errorMessage)
+                )
+            } else {
+                ProgressView("Generating dispatch package...")
+            }
+        }
+        .navigationTitle("Dispatch Document")
+        .navigationBarTitleDisplayMode(.inline)
+        .task {
+            await generatePDF()
+        }
+    }
+
+    @MainActor
+    private func generatePDF() async {
+        do {
+            let generator = DispatchPDFGenerator()
+            let input = DispatchPDFGenerator.PackageInput(
+                flight: flight,
+                aircraft: aircraft,
+                pic: pic,
+                sic: sic,
+                cabinCrew: cabinCrew
+            )
+            document = try generator.generatePDF(for: input)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+}
+
+private struct DispatchDocumentSignView: View {
+    @Environment(\.modelContext) private var modelContext
+    @Environment(\.dismiss) private var dismiss
+
+    let flight: Flight
+    @Bindable var daySign: FlightDaySign
+    let aircraft: Aircraft?
+    let pic: CrewMember?
+    let sic: CrewMember?
+    let cabinCrew: CrewMember?
+
+    @State private var document: PDFDocument?
+    @State private var errorMessage: String?
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 16) {
+                Group {
+                    if let document {
+                        PDFKitView(document: document)
+                            .frame(height: 480)
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                    } else if let errorMessage {
+                        ContentUnavailableView(
+                            "Unable to generate dispatch package",
+                            systemImage: "exclamationmark.triangle",
+                            description: Text(errorMessage)
+                        )
+                    } else {
+                        ProgressView("Generating dispatch package...")
+                            .frame(maxWidth: .infinity, minHeight: 240)
+                    }
+                }
+                .background(Color(.systemGray6))
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        Text("Captain Signature")
+                            .font(.headline)
+                        Spacer()
+                        Text(flight.pic)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    SignatureCanvasView(drawingData: signatureBinding)
+                        .frame(height: 180)
+
+                    HStack {
+                        Spacer()
+                        Button("Clear Signature") {
+                            daySign.picSignOnDrawing = nil
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                }
+                .padding()
+                .background(Color(.systemGray6))
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+            }
+            .padding()
+        }
+        .navigationTitle("Sign Dispatch")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Cancel") { dismiss() }
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Save") {
+                    saveSignature()
+                }
+                .disabled(daySign.picSignOnDrawing == nil)
+            }
+        }
+        .task {
+            await generatePDF()
+        }
+        .onChange(of: daySign.picSignOnDrawing) { _, _ in
+            Task {
+                await generatePDF()
+            }
+        }
+    }
+
+    private var signatureBinding: Binding<Data?> {
+        Binding(
+            get: { daySign.picSignOnDrawing },
+            set: { daySign.picSignOnDrawing = $0 }
+        )
+    }
+
+    @MainActor
+    private func generatePDF() async {
+        do {
+            let generator = DispatchPDFGenerator()
+            let input = DispatchPDFGenerator.PackageInput(
+                flight: flight,
+                aircraft: aircraft,
+                pic: pic,
+                sic: sic,
+                cabinCrew: cabinCrew
+            )
+            document = try generator.generatePDF(for: input, signatureData: daySign.picSignOnDrawing)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func saveSignature() {
+        if daySign.picSignOnName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            daySign.picSignOnName = flight.pic
+        }
+
+        do {
+            try modelContext.save()
+            dismiss()
+        } catch {
+            print("❌ Save dispatch signature failed:", error)
         }
     }
 }

@@ -83,22 +83,16 @@ private struct CrewDateRow: View {
     let expiry: Date?
     let status: ComplianceStatus
 
-    private let df: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "d/M/yyyy"
-        return f
-    }()
-
     var body: some View {
         HStack(spacing: 12) {
             Text(title)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            Text(last.map(df.string) ?? "—")
+            Text(last?.efbDate ?? "—")
                 .foregroundStyle(.secondary)
                 .frame(width: 110, alignment: .leading)
 
-            Text(expiry.map(df.string) ?? "—")
+            Text(expiry?.efbDate ?? "—")
                 .foregroundStyle(.secondary)
                 .frame(width: 110, alignment: .leading)
 
